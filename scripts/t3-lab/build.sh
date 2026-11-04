@@ -47,6 +47,12 @@ fi
 git -C "$src" checkout --quiet --force --detach "$sha"
 git -C "$src" clean -fdxq -e node_modules
 
+# pnpm's self-switch to packageManager breaks outside a login shell; resolve
+# pnpm (here and inside the packager) through a corepack shim instead.
+mkdir -p "$state_dir/shims"
+corepack enable --install-directory "$state_dir/shims" pnpm
+export PATH="$state_dir/shims:$PATH"
+
 cd "$src"
 pnpm install --frozen-lockfile
 rm -rf "$out"

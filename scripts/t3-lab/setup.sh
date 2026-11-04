@@ -22,7 +22,7 @@ install -m 0755 "$here/build.sh" "$bin_dir/build.sh"
 
 # launchd starts with a bare PATH; give it the tools this shell resolves.
 tool_path=""
-for tool in git pnpm node rustup cargo; do
+for tool in git node corepack rustup cargo; do
   dir="$(dirname "$(command -v "$tool")")" || { echo "missing $tool on PATH"; exit 1; }
   case ":$tool_path:" in *":$dir:"*) ;; *) tool_path="${tool_path:+$tool_path:}$dir" ;; esac
 done
