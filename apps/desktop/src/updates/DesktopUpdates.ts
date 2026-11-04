@@ -51,6 +51,7 @@ import {
   reduceDesktopUpdateStateOnUpdateAvailable,
   resolveNotAppliedInstallVersion,
 } from "./updateMachine.ts";
+import { isLabBuild } from "../app/DesktopBuildVariant.ts";
 
 const CHANNEL_CHANGE_RETRY_DELAY = Duration.seconds(1);
 const CHANNEL_CHANGE_RETRIES = 30;
@@ -338,6 +339,9 @@ function getAutoUpdateDisabledReason(args: {
   disabledByEnv: boolean;
   hasUpdateFeedConfig: boolean;
 }): string | null {
+  if (isLabBuild) {
+    return "T3 Lab is updated by its local build job.";
+  }
   if (args.policy.mode === "off") {
     return args.policy.message ?? "Updates are turned off on this machine.";
   }

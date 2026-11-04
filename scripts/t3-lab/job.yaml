@@ -1,0 +1,18 @@
+# Selfactor machine job: dispatch the T3 Lab local build daily on this Mac.
+# The workflow itself skips when main has not changed since the last install.
+#   self jobs create scripts/t3-lab/job.yaml
+# machine_id is filled in by setup.sh from ~/.selfactor/machine-id.
+machine_id: MACHINE_ID
+name: T3 Lab local build
+kind: github-action
+enabled: true
+routing: self-hosted
+repo_slug: selfactor/t3code
+target_action:
+  workflow_path: .github/workflows/t3-lab-local.yml
+  event: workflow_dispatch
+schedule:
+  cron: "0 4 * * *"
+  timezone: America/Chicago
+overlap_policy: skip
+missed_run_policy: skip
