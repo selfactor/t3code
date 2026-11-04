@@ -53,11 +53,15 @@ import {
 } from "../git/remoteRefs.ts";
 import { makeIsServerInternalPath } from "../auth/serverInternalPaths.ts";
 import * as ServerConfig from "../config.ts";
+import * as ProcessRunner from "../processRunner.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 /** T3's record of the branch, named as on the host, that a branch was cut from. */
 const branchBaseConfigKey = (branch: string) => `branch.${branch}.t3-merge-base`;
+const decodeSgitCheckoutResult = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.Struct({ path: Schema.NonEmptyString, created: Schema.Boolean })),
+);
 /**
  * Where T3 kept that record before it had a key of its own, for every host alike: the GitHub
  * CLI's key, which branches cut before then still carry instead.
@@ -952,6 +956,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const serviceScope = yield* Effect.scope;
   const statusFetches = new Map<string, Fiber.Fiber<void, GitCommandError>>();
   const statusFetchProcesses = yield* Semaphore.make(4);
+  // Runs `sgit` for the Selfactor integration; git itself keeps its own runner above.
+  const toolRunner = yield* ProcessRunner.make();
 
   const executeRaw: GitVcsDriver.GitVcsDriver["Service"]["execute"] = Effect.fnUntraced(
     function* (input) {
@@ -4207,11 +4213,96 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     },
   );
 
+  const recordBranchBase = Effect.fn("GitVcsDriver.recordBranchBase")(function* (
+    cwd: string,
+    newRefName: string,
+    base: { readonly branchName: string; readonly baseRef: string },
+  ) {
+    yield* Effect.gen(function* () {
+      yield* writeConfigValue({
+        cwd,
+        key: branchBaseConfigKey(newRefName),
+        value: base.branchName,
+      });
+      if (base.baseRef.startsWith("refs/remotes/")) {
+        // The base key names a branch on the host; this one keeps the remote it came from.
+        yield* writeConfigValue({
+          cwd,
+          key: `branch.${newRefName}.t3-merge-base-ref`,
+          value: base.baseRef,
+        });
+      }
+    }).pipe(
+      Effect.catchTags({
+        GitCommandError: () =>
+          Effect.logWarning("worktree base-ref configuration failed; using base-branch fallback"),
+      }),
+    );
+  });
+
+  /**
+   * Selfactor integration: sgit owns the worktree location, branch pin and submodule
+   * policy, all read from Selfactor's own config. Existing branches and live worktrees
+   * are reused rather than refused.
+   */
+  const createWorktreeWithSgit = Effect.fn("GitVcsDriver.createWorktreeWithSgit")(function* (
+    input: Parameters<GitVcsDriver.GitVcsDriver["Service"]["createWorktree"]>[0],
+    options: GitVcsDriver.CreateWorktreeOptions | undefined,
+  ) {
+    const targetBranch = input.newRefName ?? input.refName;
+    const args = [
+      "checkout",
+      targetBranch,
+      "--json",
+      ...(input.newRefName ? ["--from", input.refName] : []),
+    ];
+    const failure = (detail: string, cause?: unknown) =>
+      new GitCommandError({
+        operation: "GitVcsDriver.createWorktree",
+        command: `sgit ${args.join(" ")}`,
+        cwd: input.cwd,
+        detail,
+        ...(cause === undefined ? {} : { cause }),
+      });
+    const base =
+      input.newRefName && input.baseRefName
+        ? yield* resolveBranchBase(input.cwd, input.baseRefName)
+        : null;
+    const output = yield* toolRunner
+      .run({ command: "sgit", args, cwd: input.cwd, timeout: "30 minutes" })
+      .pipe(
+        Effect.mapError((cause) =>
+          failure(
+            "Could not run sgit. Install it or turn off Selfactor in Settings → Labs.",
+            cause,
+          ),
+        ),
+      );
+    if (output.code !== 0) {
+      return yield* failure(output.stderr.trim() || `sgit exited with code ${output.code}`);
+    }
+    const parsed = yield* decodeSgitCheckoutResult(output.stdout.trim()).pipe(
+      Effect.mapError((cause) => failure("sgit printed an unreadable result.", cause)),
+    );
+    const worktreePath = parsed.path;
+    // Only a worktree this call created may be removed on cancel.
+    if (parsed.created && options?.progress?.onWorktreeClaimed) {
+      yield* options.progress.onWorktreeClaimed(worktreePath);
+    }
+    if (input.newRefName && base) {
+      yield* recordBranchBase(input.cwd, input.newRefName, base);
+    }
+    return { worktree: { path: worktreePath, refName: targetBranch } };
+  });
+
   const createWorktree: GitVcsDriver.GitVcsDriver["Service"]["createWorktree"] = Effect.fn(
     "createWorktree",
   )(function* (input, options) {
     yield* refuseOptionLikeRefName("GitVcsDriver.createWorktree", input.cwd, input.refName);
     yield* refuseOptionLikeRefName("GitVcsDriver.createWorktree", input.cwd, input.newRefName);
+    if (options?.selfactor === true && input.path == null) {
+      return yield* createWorktreeWithSgit(input, options);
+    }
     const targetBranch = input.newRefName ?? input.refName;
     // Resolve sub/.. before taking the basename.
     const repoName = path.basename(path.resolve(input.cwd));
@@ -4384,26 +4475,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     }
 
     if (newRefName && base) {
-      yield* Effect.gen(function* () {
-        yield* writeConfigValue({
-          cwd: input.cwd,
-          key: branchBaseConfigKey(newRefName),
-          value: base.branchName,
-        });
-        if (base.baseRef.startsWith("refs/remotes/")) {
-          // The base key names a branch on the host; this one keeps the remote it came from.
-          yield* writeConfigValue({
-            cwd: input.cwd,
-            key: `branch.${newRefName}.t3-merge-base-ref`,
-            value: base.baseRef,
-          });
-        }
-      }).pipe(
-        Effect.catchTags({
-          GitCommandError: () =>
-            Effect.logWarning("worktree base-ref configuration failed; using base-branch fallback"),
-        }),
-      );
+      yield* recordBranchBase(input.cwd, newRefName, base);
     }
 
     return {

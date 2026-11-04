@@ -480,6 +480,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["beta link another machine vps peer agents work there delegate"],
   },
   {
+    id: "selfactor-integration",
+    title: "Selfactor",
+    to: "/settings/labs",
+    scope: "environment",
+    searchTerms: ["beta selfactor sgit self worktree layout governance"],
+  },
+  {
     id: "simlock-hosts",
     title: "Simlock device hosts (alpha)",
     to: "/settings/labs",

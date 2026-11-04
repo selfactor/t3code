@@ -748,6 +748,10 @@ export const make = Effect.gen(function* () {
     Effect.map((settings) => settings.worktreesDirectory),
     Effect.orElseSucceed(() => ""),
   );
+  const readSelfactorIntegration = serverSettingsService.getSettings.pipe(
+    Effect.map((settings) => settings.selfactorIntegrationEnabled),
+    Effect.orElseSucceed(() => false),
+  );
   const createWorktree: GitManager["Service"]["createWorktree"] = Effect.fn(
     "GitManager.createWorktree",
   )(function* (input, options) {
@@ -761,6 +765,7 @@ export const make = Effect.gen(function* () {
     const worktreesDirectory = yield* readWorktreesDirectory;
     const result = yield* gitCore.createWorktree(input, {
       worktreesDirectory,
+      selfactor: yield* readSelfactorIntegration,
       ...options,
       submodules,
     });
@@ -3062,6 +3067,7 @@ export const make = Effect.gen(function* () {
         },
         {
           worktreesDirectory: yield* readWorktreesDirectory,
+          selfactor: yield* readSelfactorIntegration,
           submodules: yield* projectSettingsFor(input).pipe(
             Effect.map(({ settings }) => settings.worktreeSubmodules),
             Effect.orElseSucceed(() => null),

@@ -25,6 +25,7 @@ export function LabsSettingsPanel() {
         {hasCloudPublicConfig() ? <GuestLinksRowWithSignIn /> : <GuestLinksRow />}
         <LinkedEnvironmentsRow />
         <SimlockHostsRow />
+        <SelfactorRow />
       </SettingsSection>
       <LegacyFeaturesSection />
     </SettingsPageContainer>
@@ -158,6 +159,35 @@ function LinkedEnvironmentsRow() {
             updateSettings({ linkedEnvironmentsEnabled: Boolean(checked) })
           }
           aria-label="Linked environments"
+        />
+      }
+    />
+  );
+}
+
+function SelfactorRow() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  return (
+    <SettingsRow
+      serverScoped
+      {...searchableSetting("selfactor-integration")}
+      settingKeys={["selfactorIntegrationEnabled"]}
+      description={
+        <>
+          Create new worktrees with <code>sgit</code>, so their location, branch pin and submodules
+          follow your Selfactor config instead of the Worktrees settings. Needs <code>sgit</code> on
+          this machine.
+        </>
+      }
+      control={
+        <ScopedSwitch
+          settingKeys={["selfactorIntegrationEnabled"]}
+          checked={settings.selfactorIntegrationEnabled}
+          onCheckedChange={(checked) =>
+            updateSettings({ selfactorIntegrationEnabled: Boolean(checked) })
+          }
+          aria-label="Selfactor"
         />
       }
     />

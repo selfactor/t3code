@@ -144,6 +144,8 @@ export interface CreateWorktreeOptions {
   /** Null or omitted defers to the checkout's t3.json. */
   readonly submodules?: WorktreeSubmodules | null;
   readonly worktreesDirectory?: string;
+  /** Selfactor integration (Labs): create through `sgit checkout`, ignoring worktreesDirectory. */
+  readonly selfactor?: boolean;
 }
 
 export interface GitCommitProgress {

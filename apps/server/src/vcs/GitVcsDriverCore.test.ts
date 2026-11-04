@@ -512,6 +512,93 @@ it.effect.each(["branch", "detached", "nested", "aliased-root", "aliased-nested"
     ).pipe(Effect.provide(layerTest)),
 );
 
+it.effect.each([true, false] as const)(
+  "creates worktrees through sgit when Selfactor is on (created: %s)",
+  (created) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const path = yield* Path.Path;
+        const sgitPath = path.join(yield* makeTmpDir("sgit-worktrees-"), "feature-sgit");
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const sgitCalls: Array<{ args: ReadonlyArray<string>; cwd: string | undefined }> = [];
+        const spawner = ChildProcessSpawner.make((command) => {
+          if (
+            ChildProcess.isStandardCommand(command) &&
+            path.basename(command.command) === "sgit"
+          ) {
+            sgitCalls.push({ args: command.args.map(String), cwd: command.options.cwd });
+            return Effect.succeed(
+              makeSuccessfulHandle(JSON.stringify({ path: sgitPath, created, source: "test" })),
+            );
+          }
+          return delegate.spawn(command);
+        });
+        const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        );
+        const claimed: Array<string> = [];
+
+        const result = yield* driver.createWorktree(
+          {
+            cwd,
+            path: null,
+            refName: initialBranch,
+            newRefName: "feature/sgit",
+            baseRefName: initialBranch,
+          },
+          {
+            selfactor: true,
+            worktreesDirectory: "/ignored",
+            progress: {
+              onWorktreeClaimed: (claimedPath) => Effect.sync(() => claimed.push(claimedPath)),
+            },
+          },
+        );
+
+        assert.deepStrictEqual(sgitCalls, [
+          { args: ["checkout", "feature/sgit", "--json", "--from", initialBranch], cwd },
+        ]);
+        assert.deepStrictEqual(result.worktree, { path: sgitPath, refName: "feature/sgit" });
+        assert.deepStrictEqual(claimed, created ? [sgitPath] : []);
+        assert.equal(
+          yield* git(cwd, ["config", "--get", "branch.feature/sgit.t3-merge-base"]),
+          initialBranch,
+        );
+      }),
+    ).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("reports sgit failures as worktree creation errors", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const cwd = yield* makeTmpDir();
+      const { initialBranch } = yield* initRepoWithCommit(cwd);
+      const path = yield* Path.Path;
+      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const spawner = ChildProcessSpawner.make((command) =>
+        ChildProcess.isStandardCommand(command) && path.basename(command.command) === "sgit"
+          ? Effect.succeed(makeFailedHandle("sgit checkout: invalid start point"))
+          : delegate.spawn(command),
+      );
+      const driver = yield* makeGitVcsDriverCore().pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      );
+
+      const failure = yield* driver
+        .createWorktree(
+          { cwd, path: null, refName: initialBranch, newRefName: "feature/bad" },
+          { selfactor: true },
+        )
+        .pipe(Effect.flip);
+
+      assert.equal(failure.operation, "GitVcsDriver.createWorktree");
+      assert.equal(failure.detail, "sgit checkout: invalid start point");
+    }),
+  ).pipe(Effect.provide(layerTest)),
+);
+
 it.effect.each(["bare", "unborn"] as const)(
   "invalidates a %s repository after worktree creation",
   (state) =>
